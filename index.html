@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Xoleric Cube</title>
+  <style>
+    html, body {
+      height: 100%; 
+      margin: 0; 
+      overflow: hidden;
+      background: #000;
+      touch-action: none;
+      font-family: monospace;
+    }
+    
+    #container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    
+    .info {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: #00ff9d;
+      font-size: 12px;
+      opacity: 0.7;
+      z-index: 10;
+      text-shadow: 0 0 10px #00ff9d;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div class="info">XOLERIC CUBE | Move Mouse & Scroll</div>
+    <canvas id="cubeCanvas"></canvas>
+  </div>
+
+  <script>
+    // ===== BIRLASHTIRILGAN CUBE VA MOTION ANIMATION =====
+    (() => {
+      const { sin, cos, hypot, max, min, PI, random, abs } = Math;
+      const canvas = document.getElementById('cubeCanvas');
+      const ctx = canvas.getContext('2d');
+      
+      let w = 0, h = 0;
+      let isDragging = false;
+      let lastX = 0, lastY = 0;
+      let cubeRotation = { x: 0, y: 0 };
+      let targetRotation = { x: 0, y: 0 };
+      
+      // Cube parameters
+      const cubeSize = 200;
+      const cubeHalf = cubeSize / 2;
+      
+      // XOLERIC letters and particles
+      const letters = ['X', 'O', 'L', 'E', 'R', 'I', 'C'];
+      const particles = [];
+      const particleCount = 40;
+      
+      // Initialize particles
+      for (let i = 0; i < particleCount; i++) {
+        particles.push({
+          // Start positions inside cube
+          x: (random() - 0.5) * cubeSize * 0.8,
+          y: (random() - 0.5) * cubeSize * 0.8,
+          z: (random() - 0.5) * cubeSize * 0.8,
+          letter: letters[Math.floor(random() * letters.length)],
+          size: 10 + random() * 10,
+          speed: {
+            x: (random() - 0.5) * 0.8,
+            y: (random() - 0.5) * 0.8,
+            z: (random() - 0.5) * 0.8
+          },
+          hue: random() * 360,
+          trail: [],
+          tentaclePoints: [],
+          t: 0
+        });
+      }
+      
+      // Helper functions
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const clamp = (val, minVal, maxVal) => Math.max(minVal, Math.min(maxVal, val));
+      const smoothstep = t => t * t * (3 - 2 * t);
+      
+      // 3D projection
+      function project(x, y, z, rotationX, rotationY) {
+        // Apply rotation
+        let rotated = rotateX(x, y, z, rotationX);
+        rotated = rotateY(rotated.x, rotated.y, rotated.z, rotationY);
+        
+        // Perspective projection
+        const fov = 500;
+        const scale = fov / (fov + rotated.z + cubeSize);
+        return {
+          x: rotated.x * scale,
+          y: rotated.y * scale,
+          z: rotated.z
+        };
+      }
+      
+      function rotateX(x, y, z, angle) {
+        const cosA = Math.cos(angle);
+        const sinA = Math.sin(angle);
+        return {
+          x: x,
+          y: y * cosA - z * sinA,
+          z: y * sinA + z * cosA
+        };
+      }
+      
+      function rotateY(x, y, z, angle) {
+        const cosA = Math.cos(angle);
+        const sinA = Math.sin(angle);
+        return {
+          x: x * cosA - z * sinA,
+          y: y,
+          z: x * sinA + z * cosA
+        };
+      }
+      
+      // Draw tentacle effect
+      function drawTentacle(points, hue, progress) {
+        if (points.length < 2) return;
+        
+        ctx.strokeStyle = `hsla(${hue}, 100%, 70%, ${0.7 * progress})`;
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        
+        ctx.beginPath();
+        for (let i = 0; i < points.length; i++) {
+          const p = points[i];
+          if (i === 0) {
+            ctx.moveTo(p.x, p.y);
+          } else {
+            ctx.lineTo(p.x, p.y);
+          }
+        }
+        ctx.stroke();
+      }
+      
+      // Draw cube
+      function drawCube() {
+        const vertices = [
+          [-cubeHalf, -cubeHalf, -cubeHalf], [cubeHalf, -cubeHalf, -cubeHalf],
+          [cubeHalf, cubeHalf, -cubeHalf], [-cubeHalf, cubeHalf, -cubeHalf],
+          [-cubeHalf, -cubeHalf, cubeHalf], [cubeHalf, -cubeHalf, cubeHalf],
+          [cubeHalf, cubeHalf, cubeHalf], [-cubeHalf, cubeHalf, cubeHalf]
+        ];
+        
+        // Rotate vertices
+        const rotated = vertices.map(([x, y, z]) => {
+          let point = rotateX(x, y, z, cubeRotation.x);
+          point = rotateY(point.x, point.y, point.z, cubeRotation.y);
+          return point;
+        });
+        
+        // Project vertices
+        const projected = rotated.map(({x, y, z}) => {
+          const p = project(x, y, z, 0, 0);
+          return {
+            x: w/2 + p.x,
+            y: h/2 + p.y
+          };
+        });
+        
+        // Draw edges
+        const edges = [
+          [0,1], [1,2], [2,3], [3,0], // Back face
+          [4,5], [5,6], [6,7], [7,4], // Front face
+          [0,4], [1,5], [2,6], [3,7]  // Connecting edges
+        ];
+        
+        // Draw edges with glow
+        ctx.strokeStyle = 'rgba(0, 255, 157, 0.9)';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        
+        ctx.shadowColor = '#00ff9d';
+        ctx.shadowBlur = 15;
+        
+        edges.forEach(([a, b]) => {
+          const p1 = projected[a];
+          const p2 = projected[b];
+          
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.stroke();
+        });
+        
+        ctx.shadowBlur = 0;
+        
+        // Draw transparent faces
+        const faces = [
+          [0,1,2,3], [4,5,6,7], [0,1,5,4],
+          [2,3,7,6], [0,3,7,4], [1,2,6,5]
+        ];
+        
+        faces.forEach(face => {
+          ctx.fillStyle = 'rgba(0, 40, 20, 0.1)';
+          ctx.beginPath();
+          face.forEach((v, i) => {
+            const p = projected[v];
+            if (i === 0) ctx.moveTo(p.x, p.y);
+            else ctx.lineTo(p.x, p.y);
+          });
+          ctx.closePath();
+          ctx.fill();
+        });
+      }
+      
+      // Update and draw particles
+      function updateParticles(time) {
+        particles.forEach((p, idx) => {
+          // Move particle
+          p.x += p.speed.x;
+          p.y += p.speed.y;
+          p.z += p.speed.z;
+          
+          // Keep particles inside cube boundaries
+          const boundary = cubeHalf - p.size/2;
+          if (abs(p.x) > boundary) {
+            p.x = Math.sign(p.x) * boundary;
+            p.speed.x *= -0.8;
+            p.hue = (p.hue + 60) % 360;
+          }
+          if (abs(p.y) > boundary) {
+            p.y = Math.sign(p.y) * boundary;
+            p.speed.y *= -0.8;
+            p.hue = (p.hue + 60) % 360;
+          }
+          if (abs(p.z) > boundary) {
+            p.z = Math.sign(p.z) * boundary;
+            p.speed.z *= -0.8;
+            p.hue = (p.hue + 60) % 360;
+          }
+          
+          // Update tentacle effect
+          p.t = (p.t + 0.02) % 1;
+          
+          // Add current position to tentacle points
+          p.tentaclePoints.push({
+            x: p.x,
+            y: p.y,
+            z: p.z,
+            t: p.t
+          });
+          
+          // Keep only recent points
+          if (p.tentaclePoints.length > 15) {
+            p.tentaclePoints.shift();
+          }
+          
+          // Update hue
+          p.hue = (p.hue + 0.5) % 360;
+          
+          // Random direction changes
+          if (random() < 0.02) {
+            p.speed.x += (random() - 0.5) * 0.2;
+            p.speed.y += (random() - 0.5) * 0.2;
+            p.speed.z += (random() - 0.5) * 0.2;
+          }
+          
+          // Project particle position
+          const proj = project(p.x, p.y, z, cubeRotation.x, cubeRotation.y);
+          const screenX = w/2 + proj.x;
+          const screenY = h/2 + proj.y;
+          
+          // Draw tentacle trail
+          if (p.tentaclePoints.length > 1) {
+            const trailPoints = [];
+            
+            // Project all tentacle points
+            p.tentaclePoints.forEach((tp, i) => {
+              const trailProj = project(tp.x, tp.y, tp.z, cubeRotation.x, cubeRotation.y);
+              trailPoints.push({
+                x: w/2 + trailProj.x,
+                y: h/2 + trailProj.y,
+                progress: i / p.tentaclePoints.length
+              });
+            });
+            
+            drawTentacle(trailPoints, p.hue, p.t);
+          }
+          
+          // Draw particle (XOLERIC letter)
+          ctx.fillStyle = `hsla(${p.hue}, 100%, 70%, 0.9)`;
+          ctx.font = `bold ${p.size}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.shadowColor = `hsla(${p.hue}, 100%, 70%, 0.7)`;
+          ctx.shadowBlur = 10;
+          ctx.fillText(p.letter, screenX, screenY);
+          ctx.shadowBlur = 0;
+          
+          // Draw glow around particle
+          ctx.beginPath();
+          ctx.arc(screenX, screenY, p.size/1.5, 0, PI * 2);
+          ctx.fillStyle = `hsla(${p.hue}, 100%, 50%, 0.1)`;
+          ctx.fill();
+        });
+      }
+      
+      // Resize canvas
+      function resize() {
+        w = canvas.width = window.innerWidth;
+        h = canvas.height = window.innerHeight;
+      }
+      resize();
+      window.addEventListener('resize', resize);
+      
+      // Mouse events
+      canvas.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      });
+      
+      canvas.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        
+        const deltaX = e.clientX - lastX;
+        const deltaY = e.clientY - lastY;
+        
+        targetRotation.y += deltaX * 0.01;
+        targetRotation.x += deltaY * 0.01;
+        
+        lastX = e.clientX;
+        lastY = e.clientY;
+      });
+      
+      canvas.addEventListener('mouseup', () => {
+        isDragging = false;
+      });
+      
+      canvas.addEventListener('mouseleave', () => {
+        isDragging = false;
+      });
+      
+      // Touch events
+      canvas.addEventListener('touchstart', (e) => {
+        isDragging = true;
+        lastX = e.touches[0].clientX;
+        lastY = e.touches[0].clientY;
+        e.preventDefault();
+      });
+      
+      canvas.addEventListener('touchmove', (e) => {
+        if (!isDragging) return;
+        
+        const deltaX = e.touches[0].clientX - lastX;
+        const deltaY = e.touches[0].clientY - lastY;
+        
+        targetRotation.y += deltaX * 0.02;
+        targetRotation.x += deltaY * 0.02;
+        
+        lastX = e.touches[0].clientX;
+        lastY = e.touches[0].clientY;
+        e.preventDefault();
+      });
+      
+      canvas.addEventListener('touchend', () => {
+        isDragging = false;
+      });
+      
+      // Scroll for rotation
+      window.addEventListener('wheel', (e) => {
+        targetRotation.y += e.deltaY * 0.001;
+      }, { passive: true });
+      
+      // Animation loop
+      let lastTime = 0;
+      function animate(currentTime) {
+        requestAnimationFrame(animate);
+        
+        const deltaTime = currentTime - lastTime;
+        lastTime = currentTime;
+        const time = currentTime * 0.001;
+        
+        // Clear canvas with fade effect
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+        ctx.fillRect(0, 0, w, h);
+        
+        // Smooth cube rotation
+        cubeRotation.x += (targetRotation.x - cubeRotation.x) * 0.1;
+        cubeRotation.y += (targetRotation.y - cubeRotation.y) * 0.1;
+        
+        // Draw cube
+        drawCube();
+        
+        // Update and draw particles
+        updateParticles(time);
+        
+        // Auto rotation when idle
+        if (!isDragging && abs(targetRotation.y) < 0.001) {
+          targetRotation.y += 0.0003;
+        }
+        
+        // Rotation decay
+        targetRotation.x *= 0.98;
+        targetRotation.y *= 0.98;
+      }
+      
+      // Start animation
+      animate(0);
+      
+    })();
+  </script>
+</body>
+</html>
