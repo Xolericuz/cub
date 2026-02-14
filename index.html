@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+<title>/xoleric</title>
+<style>
+:root {
+    --primary: #00ff88;
+    --bg-color: #030303;
+}
+body {
+    margin: 0; padding: 0; overflow: hidden; background-color: var(--bg-color);
+    font-family: 'Courier New', monospace; user-select: none;
+    -webkit-font-smoothing: antialiased;
+}
+#canvas-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+
+/* Glassmorphism UI */
+#ui-layer {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none;
+    padding: clamp(20px, 5vw, 40px); box-sizing: border-box; 
+    display: flex; flex-direction: column; justify-content: space-between;
+    opacity: 0; transform: scale(0.95); transition: all 1.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hud-panel {
+    background: rgba(10, 10, 10, 0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 15px 25px;
+    border-radius: 8px;
+    display: inline-block;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+}
+.hud-top { align-self: flex-start; }
+.hud-bottom { align-self: flex-end; display: flex; gap: 20px; align-items: center; }
+
+.hud-text { color: rgba(255, 255, 255, 0.6); font-size: clamp(10px, 2vw, 12px); letter-spacing: 2px; text-transform: uppercase; }
+.hud-title { color: #fff; font-size: clamp(18px, 4vw, 24px); font-weight: bold; letter-spacing: 4px; margin-bottom: 5px; text-shadow: 0 0 15px var(--primary); }
+#fps-counter { color: var(--primary); font-weight: bold; }
+</style>
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+}
+</script>
+</head>
+<body>
+<div id="ui-layer">
+    <div class="hud-panel hud-top">
+        <div class="hud-title" id="main-title">XOLERIC</div>
+        <div class="hud-text">buni xech qanday foydasi yo'q shunchaki qiziqishim ortidan shakillangan product</div>
+    </div>
+    <div class="hud-panel hud-bottom">
+        <div class="hud-text">System Status: <span style="color:var(--primary)">Optimal</span></div>
+        <div class="hud-text">FPS: <span id="fps-counter">60</span></div>
+    </div>
+</div>
+<div id="canvas-container"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+class XolericNeuralCore {
+    constructor() {
+        this.container = document.getElementById('canvas-container');
+        this.width = window.innerWidth; 
+        this.height = window.innerHeight;
+        this.isMobile = this.width < 768; // Mobil qurilmani aniqlash
+
+        this.mouse = new THREE.Vector2(0, 0); 
+        this.targetRotation = new THREE.Vector2(0, 0);
+        this.windowHalfX = this.width / 2; 
+        this.windowHalfY = this.height / 2;
+        
+        this.time = 0; 
+        this.hue = 0; 
+        this.uiShown = false;
+        
+        // FPS hisoblash uchun
+        this.lastFrameTime = performance.now();
+        this.frameCount = 0;
+        this.fpsElement = document.getElementById('fps-counter');
+        this.titleElement = document.getElementById('main-title');
+
+        this.init();
+        this.addCoreCube();
+        this.addNeuralNetwork();
+        this.initPostProcessing();
+        this.addMatrixBackground();
+        this.addEventListeners();
+        this.animate();
+    }
+
+    init() {
+        this.scene = new THREE.Scene(); 
+        this.scene.fog = new THREE.FogExp2(0x000000, 0.025);
+
+        this.camera = new THREE.PerspectiveCamera(50, this.width / this.height, 0.1, 100);
+        this.camera.position.z = this.isMobile ? 6.5 : 5; // Mobilda uzoqroqdan ko'rsatish
+
+        this.renderer = new THREE.WebGLRenderer({ antialias: !this.isMobile, alpha: true, powerPreference: "high-performance" });
+        this.renderer.setSize(this.width, this.height); 
+        // Mobilda unumdorlik uchun Pixel Ratio ni cheklaymiz
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.isMobile ? 1.5 : 2));
+        this.renderer.toneMapping = THREE.ACESFilmicToneMapping; 
+        this.renderer.toneMappingExposure = 1.2;
+        this.container.appendChild(this.renderer.domElement);
+
+        const ambientLight = new THREE.AmbientLight(0x222222, 2); 
+        this.scene.add(ambientLight);
+        this.pointLight1 = new THREE.PointLight(0xffffff, 40, 20); 
+        this.pointLight1.position.set(2, 2, 2); 
+        this.scene.add(this.pointLight1);
+        
+        this.pointLight2 = new THREE.PointLight(0xffffff, 40, 20); 
+        this.pointLight2.position.set(-2, -2, 2); 
+        this.scene.add(this.pointLight2);
+    }
+
+    addCoreCube() {
+        const coreGeometry = new THREE.BoxGeometry(1.4, 1.4, 1.4);
+        this.canvas = document.createElement('canvas'); 
+        this.canvas.width = 512; this.canvas.height = 512;
+        this.texCtx = this.canvas.getContext('2d', { alpha: false }); 
+        
+        this.canvasTexture = new THREE.CanvasTexture(this.canvas);
+        this.canvasTexture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+
+        this.coreMaterial = new THREE.MeshPhysicalMaterial({
+            map: this.canvasTexture, color: 0xffffff, metalness: 0.2, roughness: 0.1, 
+            transmission: 0.4, thickness: 1.0, emissive: 0x000000, emissiveIntensity: 0.8,
+            clearcoat: 1, clearcoatRoughness: 0.1
+        });
+        
+        this.coreCube = new THREE.Mesh(coreGeometry, this.coreMaterial); 
+        this.scene.add(this.coreCube);
+
+        const cageGeometry = new THREE.BoxGeometry(1.9, 1.9, 1.9);
+        const cageMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true, transparent: true, opacity: 0.15 });
+        this.cage = new THREE.Mesh(cageGeometry, cageMaterial); 
+        this.scene.add(this.cage);
+    }
+
+    addNeuralNetwork() {
+        this.neurons = []; 
+        // Mobilda qotmasligi uchun neyronlar sonini keskin kamaytiramiz
+        const neuronCount = this.isMobile ? 40 : 100;
+        
+        const neuronGeo = new THREE.SphereGeometry(this.isMobile ? 0.04 : 0.025, 8, 8);
+        const neuronMat = new THREE.MeshBasicMaterial({ color: 0x00ff88 });
+
+        for(let i = 0; i < neuronCount; i++) {
+            const neuron = new THREE.Mesh(neuronGeo, neuronMat);
+            // Kengroq hududga tarqatish
+            neuron.position.set((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 2);
+            neuron.scale.set(0.01, 0.01, 0.01);
+            this.scene.add(neuron);
+            
+            this.neurons.push({
+                mesh: neuron,
+                basePos: neuron.position.clone(),
+                vel: new THREE.Vector3((Math.random() - 0.5) * 0.01, (Math.random() - 0.5) * 0.01, (Math.random() - 0.5) * 0.01)
+            });
+        }
+
+        this.neuronLinesGeo = new THREE.BufferGeometry();
+        const positions = new Float32Array(neuronCount * neuronCount * 3 * 2);
+        this.neuronLinesGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        this.neuronLinesMat = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.15 });
+        this.neuronLines = new THREE.LineSegments(this.neuronLinesGeo, this.neuronLinesMat); 
+        this.scene.add(this.neuronLines);
+    }
+
+    initPostProcessing() {
+        const renderScene = new RenderPass(this.scene, this.camera);
+        // Mobilda Bloom rezolyutsiyasini kamaytiramiz
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(this.width / (this.isMobile ? 2 : 1), this.height / (this.isMobile ? 2 : 1)), 
+            1.2, 0.5, 0.2
+        );
+        this.composer = new EffectComposer(this.renderer); 
+        this.composer.addPass(renderScene); 
+        this.composer.addPass(bloomPass);
+    }
+
+    addMatrixBackground() {
+        this.bgCanvas = document.createElement('canvas'); 
+        this.bgCanvas.style.position = 'fixed'; 
+        this.bgCanvas.style.top = '0'; 
+        this.bgCanvas.style.left = '0'; 
+        this.bgCanvas.style.zIndex = '0'; 
+        this.bgCanvas.style.opacity = '0.15'; 
+        this.bgCanvas.style.pointerEvents = 'none';
+        document.body.appendChild(this.bgCanvas);
+        
+        this.bgCtx = this.bgCanvas.getContext('2d', { alpha: false }); 
+        this.matrixDrops = []; 
+        this.resizeMatrix();
+    }
+
+    resizeMatrix() { 
+        this.bgCanvas.width = window.innerWidth; 
+        this.bgCanvas.height = window.innerHeight;
+        const fontSize = this.isMobile ? 12 : 16;
+        const columns = Math.floor(this.bgCanvas.width / fontSize); 
+        this.matrixDrops = Array(columns).fill(1);
+    }
+
+    updateMatrix() {
+        // Optimallashtirish: Har 2 freymda 1 marta yangilanadi
+        if(this.frameCount % 2 !== 0) return;
+
+        this.bgCtx.fillStyle = 'rgba(3, 3, 3, 0.1)'; 
+        this.bgCtx.fillRect(0, 0, this.bgCanvas.width, this.bgCanvas.height);
+        this.bgCtx.fillStyle = `hsl(${this.hue}, 100%, 50%)`; 
+        
+        const fontSize = this.isMobile ? 12 : 16;
+        this.bgCtx.font = `${fontSize}px Courier New`;
+        const chars = "XOLERIC01<>{}[]"; 
+        
+        for(let i = 0; i < this.matrixDrops.length; i++) {
+            const text = chars[Math.floor(Math.random() * chars.length)];
+            this.bgCtx.fillText(text, i * fontSize, this.matrixDrops[i] * fontSize);
+            if(this.matrixDrops[i] * fontSize > this.bgCanvas.height && Math.random() > 0.95) {
+                this.matrixDrops[i] = 0;
+            }
+            this.matrixDrops[i]++;
+        }
+    }
+
+    updateTexture() {
+        // Optimallashtirish: Texture faqat rang o'zgarganda chiziladi (har freymda emas)
+        if(this.frameCount % 3 !== 0) return;
+
+        this.texCtx.fillStyle = '#050505'; 
+        this.texCtx.fillRect(0, 0, 512, 512);
+        
+        this.texCtx.lineWidth = 15; 
+        this.texCtx.strokeStyle = `hsl(${this.hue}, 80%, 40%)`; 
+        this.texCtx.strokeRect(30, 30, 452, 452);
+        
+        this.texCtx.font = 'bold 60px Courier New'; 
+        this.texCtx.textAlign = 'center'; 
+        this.texCtx.textBaseline = 'middle';
+        this.texCtx.fillStyle = `hsl(${this.hue}, 100%, 65%)`;
+        this.texCtx.fillText("X O L E R I C", 256, 256);
+        this.texCtx.font = '24px Courier New';
+        this.texCtx.fillText("NEURAL CORE ONLINE", 256, 320);
+
+        this.canvasTexture.needsUpdate = true;
+    }
+
+    addEventListeners() {
+        window.addEventListener('resize', this.onWindowResize.bind(this));
+        document.addEventListener('mousemove', this.onDocumentMouseMove.bind(this));
+        document.addEventListener('touchmove', this.onTouchMove.bind(this), { passive: false });
+    }
+
+    onWindowResize() { 
+        this.width = window.innerWidth; this.height = window.innerHeight;
+        this.isMobile = this.width < 768;
+        this.windowHalfX = this.width / 2; this.windowHalfY = this.height / 2;
+        this.camera.aspect = this.width / this.height; 
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(this.width, this.height); 
+        this.composer.setSize(this.width, this.height); 
+        this.resizeMatrix();
+    }
+    
+    onDocumentMouseMove(e) { 
+        this.mouse.x = (e.clientX - this.windowHalfX) * 0.001; 
+        this.mouse.y = (e.clientY - this.windowHalfY) * 0.001; 
+    }
+    
+    onTouchMove(e) { 
+        if(e.touches.length > 0) { 
+            this.mouse.x = (e.touches[0].clientX - this.windowHalfX) * 0.002; 
+            this.mouse.y = (e.touches[0].clientY - this.windowHalfY) * 0.002; 
+        } 
+    }
+
+    updateFPS() {
+        const now = performance.now();
+        const delta = now - this.lastFrameTime;
+        if(delta >= 1000) {
+            const fps = Math.round((this.frameCount * 1000) / delta);
+            this.fpsElement.innerText = fps;
+            // Agar FPS tushib ketsa rangi o'zgaradi
+            this.fpsElement.style.color = fps < 30 ? '#ff3333' : fps < 50 ? '#ffaa00' : 'var(--primary)';
+            this.frameCount = 0;
+            this.lastFrameTime = now;
+        }
+        this.frameCount++;
+    }
+
+    animate() {
+        requestAnimationFrame(this.animate.bind(this));
+        this.time += 0.01; 
+        this.hue = (this.hue + 0.3) % 360; // Rang o'zgarishini sekinlashtirdik
+        
+        this.updateFPS();
+
+        const colorHex = new THREE.Color(`hsl(${this.hue}, 100%, 50%)`);
+        const dimColorHex = new THREE.Color(`hsl(${this.hue}, 100%, 20%)`);
+        
+        this.cage.material.color = colorHex; 
+        this.coreMaterial.emissive = dimColorHex;
+        this.pointLight1.color = colorHex; 
+        this.pointLight2.color = new THREE.Color(`hsl(${(this.hue + 180) % 360}, 100%, 50%)`);
+
+        // UI Title color sync
+        this.titleElement.style.textShadow = `0 0 15px hsl(${this.hue}, 100%, 50%)`;
+
+        // Kub silliq aylanishi + sichqoncha bilan boshqarish
+        this.targetRotation.x = this.mouse.y * 3; 
+        this.targetRotation.y = this.mouse.x * 3;
+        this.coreCube.rotation.x += (this.targetRotation.x - this.coreCube.rotation.x) * 0.05;
+        this.coreCube.rotation.y += (this.targetRotation.y - this.coreCube.rotation.y) * 0.05;
+        this.coreCube.rotation.z += 0.003; 
+        
+        this.cage.rotation.copy(this.coreCube.rotation); 
+        this.cage.rotation.x *= -1.5;
+
+        // Neyronlar animatsiyasi va sichqonchaga reaksiya
+        let completeCount = 0;
+        const mouseVec3 = new THREE.Vector3(this.mouse.x * 5, -this.mouse.y * 5, 0);
+
+        this.neurons.forEach(n => {
+            // O'sish animatsiyasi
+            if(n.mesh.scale.x < 1) {
+                const s = Math.min(n.mesh.scale.x + 0.02, 1);
+                n.mesh.scale.set(s, s, s);
+            } else {
+                completeCount++;
+            }
+
+            // Asosiy harakat
+            n.mesh.position.add(n.vel);
+            
+            // Chegaradan chiqsa orqaga qaytish
+            for(const axis of ['x','y','z']){
+                if(n.mesh.position[axis] > 1.5 || n.mesh.position[axis] < -1.5) n.vel[axis] *= -1;
+            }
+
+            // Sichqonchaga reaksiya (Parallax / Interactivity)
+            const dist = n.mesh.position.distanceTo(mouseVec3);
+            if(dist < 1.0) {
+                n.mesh.position.lerp(n.basePos, 0.05); // qochish o'rniga joyiga qaytish effekti bilan tebranish
+            }
+            n.mesh.material.color = colorHex;
+        });
+
+        if(!this.uiShown && completeCount === this.neurons.length) {
+            this.uiShown = true;
+            document.getElementById('ui-layer').style.opacity = '1';
+            document.getElementById('ui-layer').style.transform = 'scale(1)';
+        }
+
+        // Neyronlar orasidagi chiziqlarni hisoblash (Optimallashtirilgan masofa tekshiruvi)
+        const positions = this.neuronLinesGeo.attributes.position.array; 
+        let idx = 0;
+        const connectDist = this.isMobile ? 0.6 : 0.45; // Mobilda kamroq chiziqlar lekin uzoroqqa yetadi
+
+        for(let i = 0; i < this.neurons.length; i++) {
+            for(let j = i + 1; j < this.neurons.length; j++) {
+                // Tezkor masofa tekshiruvi (Ildiz ostidan qochish uchun)
+                const dx = this.neurons[i].mesh.position.x - this.neurons[j].mesh.position.x;
+                const dy = this.neurons[i].mesh.position.y - this.neurons[j].mesh.position.y;
+                const dz = this.neurons[i].mesh.position.z - this.neurons[j].mesh.position.z;
+                const distSq = dx*dx + dy*dy + dz*dz;
+
+                if(distSq < (connectDist * connectDist)) {
+                    positions[idx++] = this.neurons[i].mesh.position.x; 
+                    positions[idx++] = this.neurons[i].mesh.position.y; 
+                    positions[idx++] = this.neurons[i].mesh.position.z;
+                    positions[idx++] = this.neurons[j].mesh.position.x; 
+                    positions[idx++] = this.neurons[j].mesh.position.y; 
+                    positions[idx++] = this.neurons[j].mesh.position.z;
+                }
+            }
+        }
+        
+        this.neuronLinesMat.color = colorHex;
+        this.neuronLinesGeo.setDrawRange(0, idx / 3); 
+        this.neuronLinesGeo.attributes.position.needsUpdate = true;
+
+        this.updateTexture(); 
+        this.updateMatrix(); 
+        this.composer.render();
+    }
+}
+
+new XolericNeuralCore();
+</script>
+</body>
+</html>
